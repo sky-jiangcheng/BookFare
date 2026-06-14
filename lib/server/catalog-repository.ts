@@ -224,7 +224,7 @@ export async function getBookDetailsFromDatabase(bookId: string): Promise<Book |
  * Lightweight rerank for large result sets (> SIMPLE_RERANK_THRESHOLD).
  * Skips expensive per-book scoring; applies field-weighted scoring only.
  */
-function applySimpleRerank(
+export function applySimpleRerank(
   books: Book[],
   filters: CatalogSearchFilters,
   searchTerms: string[],
@@ -233,6 +233,17 @@ function applySimpleRerank(
   const query = [filters.query, ...searchTerms].filter(Boolean).join(' ').toLowerCase();
   const terms = query ? query.match(/[\p{Script=Han}]{2,}|[\p{L}\p{N}]{2,}/gu) ?? [] : [];
   const stopwords = new Set(['推荐', '书', '书籍', '书单', '适合', '相关', '一些', '一个', '一本', '给我', '来', '看看', '可以', '想要', '希望', '关于', '比较', '家里', '家人', '最好', '请', '帮我', '有哪些', '哪些']);
+
+  // Requirement-derived signals that the default rerank honors but the
+  // lightweight path previously dropped. Precompute them once so the per-book
+  // loop only does cheap field checks. See docs/rerank-weights-audit.md §三
+  // (问题 3) for why these two — exclusion keywords and age fit — must not
+  // silently disappear at the >500-row threshold.
+  const requirement = filters.requirement;
+  const excludedKeywords = (requirement?.constraints?.exclude_keywords ?? []).map((kw) =>
+    kw.toLowerCase(),
+  );
+  const libraryType = requirement?.inferred_library_type;
 
   const scored = books.map((book) => {
     let score = Math.log1p(Math.max(0, book.relevance_score ?? 0)) * 0.35;
@@ -247,6 +258,29 @@ function applySimpleRerank(
       else if (category.includes(term)) score += 2.6;
       else if (author.includes(term)) score += 1.4;
       else if (haystack.includes(term)) score += 0.6;
+    }
+
+    // Exclusion constraint penalty (mirrors computeBookScore: −10). A book that
+    // matches a user-supplied exclusion keyword (e.g. "教材", "教辅") is pushed
+    // down hard so it effectively drops out of the top results.
+    if (
+      excludedKeywords.length > 0 &&
+      excludedKeywords.some((keyword) => haystack.includes(keyword))
+    ) {
+      score -= 10;
+    }
+
+    // Age-range fit for child / teen library types (mirrors computeBookScore:
+    // ±3.0). Books whose stated age band overlaps the library's audience are
+    // boosted; off-target books are demoted.
+    if (libraryType === '小学' || libraryType === '初高中') {
+      const ageMin = book.age_min != null ? Number(book.age_min) : null;
+      const ageMax = book.age_max != null ? Number(book.age_max) : null;
+      if (ageMin !== null && ageMax !== null) {
+        const fits =
+          libraryType === '小学' ? ageMin <= 12 && ageMax >= 6 : ageMin <= 18 && ageMax >= 12;
+        score += fits ? 3.0 : -3.0;
+      }
     }
 
     const bookId = book.book_id;
