@@ -32,7 +32,11 @@ export function loadProviderConfig(): LLMProviderConfig {
       }
       return parsed as LLMProviderConfig;
     }
-  } catch {}
+  } catch (error) {
+    // Corrupt/missing persisted config is non-fatal — fall back to defaults —
+    // but log so a user reporting "my settings were lost" is debuggable.
+    console.warn('[provider-config] Failed to load persisted LLM provider config, using defaults:', error);
+  }
   return { ...DEFAULT_PROVIDER_CONFIG };
 }
 

@@ -42,11 +42,13 @@ test('catalog search uses the shared OR text-search builder', () => {
 
 test('query preparation UI exposes confirmation, strategy, templates, and manual exclusions', () => {
   const ragChat = source('components/rag-chat.tsx');
+  const sidebar = source('components/RAGChat/SidebarContent.tsx');
   const tuningPanel = source('components/RAGChat/TuningPanel.tsx');
 
   assert.match(ragChat, /本轮策略/);
   assert.match(ragChat, /确认调整/);
-  assert.match(ragChat, /保存为需求模板/);
+  // The "save as template" affordance now lives in the extracted SidebarContent component.
+  assert.match(sidebar, /保存为需求模板/);
   assert.match(ragChat, /buildPseudoSql/);
   assert.match(tuningPanel, /添加排除词/);
   assert.match(tuningPanel, /碰撞建议/);

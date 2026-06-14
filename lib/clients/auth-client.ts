@@ -35,7 +35,10 @@ export async function validateToken(token: string): Promise<{ valid: boolean; us
     }
 
     return response.json() as Promise<{ valid: boolean; user?: UserInfo }>;
-  } catch {
+  } catch (error) {
+    // Fail-closed: an auth-service outage must not grant access. Log so the
+    // resulting wave of 401/403 responses is traceable to its root cause.
+    console.warn('[auth-client] Token validation failed (denying request):', error);
     return { valid: false };
   }
 }

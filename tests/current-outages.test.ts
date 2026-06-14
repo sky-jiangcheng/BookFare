@@ -20,16 +20,21 @@ test('category quality uses valid grouped aggregation queries', async () => {
 });
 
 test('chat keeps local and remote session identifiers separate', async () => {
-  const source = await readSource('components/rag-chat.tsx');
+  // SessionItem lives in rag-chat-utils.ts and is consumed by rag-chat.tsx;
+  // the contract we guard is that local id and remoteSessionId stay distinct.
+  const source = await readSource('components/rag-chat-utils.ts');
 
   assert.match(source, /remoteSessionId\?: string/);
-  assert.doesNotMatch(source, /return \{ \.\.\.s, id: data\.sessionId \}/);
-  assert.doesNotMatch(source, /setActiveSessionId\(data\.sessionId\)/);
+  const chatSource = await readSource('components/rag-chat.tsx');
+  assert.doesNotMatch(chatSource, /return \{ \.\.\.s, id: data\.sessionId \}/);
+  assert.doesNotMatch(chatSource, /setActiveSessionId\(data\.sessionId\)/);
 });
 
 test('catalog search applies publication year as a parameterized filter', async () => {
   const source = await readSource('lib/server/catalog-repository.ts');
 
-  assert.match(source, /publication_year >= \$\$\{params\.length\}/);
+  // The WHERE builder advances a shared `paramIdx` counter for each placeholder.
+  // Both the min and max year bounds must be parameterized (not string-interpolated).
   assert.match(source, /publication_year >= \$\$\{paramIdx\+\+\}/);
+  assert.match(source, /publication_year <= \$\$\{paramIdx\+\+\}/);
 });

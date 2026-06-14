@@ -9,10 +9,14 @@ import { REDIS_KEYS, TTL } from '@/lib/utils/redis-keys';
 let sql: typeof import('@vercel/postgres').sql | null = null;
 try {
   if (process.env.POSTGRES_URL) {
-    sql = require('@vercel/postgres').sql;
+    // Dynamic import keeps @vercel/postgres optional (it may be absent when
+    // POSTGRES_URL is unset and the memory/Redis fallbacks are in use).
+    const postgresModule = await import('@vercel/postgres');
+    sql = postgresModule.sql;
   }
-} catch {
-  // @vercel/postgres not installed — fall through to memory
+} catch (error) {
+  // @vercel/postgres not installed or unavailable — fall through to memory.
+  console.warn('[session-store] @vercel/postgres unavailable, using memory fallback:', error);
 }
 
 let tableEnsured = false;

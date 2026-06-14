@@ -92,8 +92,10 @@ async function checkRedisRateLimit(
       remaining: result[1],
       resetTime: result[2],
     };
-  } catch {
-    // Redis 错误时降级到内存限流
+  } catch (error) {
+    // Redis unavailable — degrade to per-instance in-memory limiting. Log so a
+    // silent loss of distributed rate-limit visibility doesn't go unnoticed.
+    console.warn('[middleware] Redis rate-limit failed, degrading to in-memory limiting:', error);
     return null;
   }
 }

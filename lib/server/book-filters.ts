@@ -16,7 +16,7 @@ type FilterStatus = {
   };
 };
 
-let filterCache: Record<
+const filterCache: Record<
   string,
   {
     expiresAt: number;

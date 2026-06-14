@@ -48,6 +48,8 @@ export interface RetrievalResult {
 
 export interface RecommendedBook extends Book {
   explanation: string;
+  /** Optional provenance label (e.g. 'keyword' / 'popular') added at retrieval time. */
+  source?: string;
 }
 
 export interface RecommendationResult {

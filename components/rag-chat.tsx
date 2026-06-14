@@ -1,14 +1,24 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import type { MessageType } from '@/components/rag-chat-utils';
+import {
+  attachRemoteSessionId,
+  recoverInterruptedMessages,
+  normalizeBookRecommendations,
+  normalizeRequirementSnapshot,
+  consumeSSEStream,
+  collectExportBooks,
+  generateBooklistName,
+  type MessageType,
+  type SessionItem,
+} from '@/components/rag-chat-utils';
 import { RAGChatHeader } from '@/components/RAGChat/RAGChatHeader';
 import { StarterPrompts } from '@/components/RAGChat/StarterPrompts';
 import { MessageList } from '@/components/RAGChat/MessageList';
 import { ChatInput } from '@/components/RAGChat/ChatInput';
 import { Toast } from '@/components/RAGChat/Toast';
 import { TuningPanel } from '@/components/RAGChat/TuningPanel';
-import { attachRemoteSessionId, recoverInterruptedMessages } from '@/components/rag-chat-utils';
+import { SidebarContent } from '@/components/RAGChat/SidebarContent';
 import {
   buildPseudoSql,
   findExactTemplate,
@@ -16,38 +26,11 @@ import {
   type RequirementTemplate,
 } from '@/components/query-preparation';
 import type { RequirementAnalysis } from '@/lib/types/rag';
-import { Sparkles, Menu, Plus, MessageSquare, Trash2, X, Sliders, Bookmark, FileSearch } from 'lucide-react';
-import { LLMSettingsDialog } from '@/components/RAGChat/LLMSettingsDialog';
+import { Menu, X, Sliders, FileSearch } from 'lucide-react';
 import type { LLMProviderConfig } from '@/lib/config/provider-config';
 import { loadProviderConfig, saveProviderConfig } from '@/lib/config/provider-config';
 
 const CHAT_REQUEST_TIMEOUT_MS = 30_000;
-
-interface SessionItem {
-  id: string;
-  remoteSessionId?: string;
-  title: string;
-  messages: MessageType[];
-  lastSql?: string;
-  targetCount: number;
-  categoryWeight: number;
-  keywordWeight: number;
-  selectedExclusions: string[];
-  selectedKeywords?: string[];
-  libraryCategory?: string;
-}
-
-function generateBooklistName(userInput: string, requirement?: { categories?: string[]; constraints?: { target_count?: number } }): string {
-  const cleanInput = userInput.trim().replace(/[^\w\u4e00-\u9fa5\s]/g, '').replace(/_+/g, '').replace(/\s+/g, '_').slice(0, 20);
-
-  if (!requirement || !requirement.categories || requirement.categories.length === 0) {
-    return cleanInput || '书单';
-  }
-
-  const primaryCategory = requirement.categories[0].replace(/_+/g, '');
-  const targetCount = requirement.constraints?.target_count;
-  return targetCount ? `${primaryCategory}_${targetCount}本` : (primaryCategory || cleanInput || '书单');
-}
 
 export function RAGChat() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -630,38 +613,7 @@ export function RAGChat() {
     setExporting(true);
 
     try {
-      const seenBookIds = new Set<string>();
-      const allBooks: Array<{
-        book_id?: number; title: string; author?: string | null; publisher?: string | null;
-        publication_year?: number | null;
-        category?: string | null; price?: number | null; stock?: number | null;
-        score?: number | null; source?: string; remark?: string | null;
-      }> = [];
-
-      messages.forEach(msg => {
-        if (msg.role === 'assistant' && msg.recommendations) {
-          msg.recommendations.forEach(book => {
-            const bookId = String(book.book_id);
-            if (bookId && !seenBookIds.has(bookId)) {
-              seenBookIds.add(bookId);
-              const numericBookId = Number(bookId);
-              allBooks.push({
-                book_id: Number.isSafeInteger(numericBookId) ? numericBookId : undefined,
-                title: book.title?.trim() || '未知书名',
-                author: book.author || null,
-                publisher: book.publisher || null,
-                publication_year: book.publication_year ?? null,
-                category: book.category || null,
-                price: typeof book.price === 'number' ? book.price : null,
-                stock: typeof book.stock === 'number' ? book.stock : null,
-                score: typeof book.match_score === 'number' ? Math.round(book.match_score * 100) : null,
-                source: book.source || '智能推荐',
-                remark: book.explanation || book.remark || null,
-              });
-            }
-          });
-        }
-      });
+      const allBooks = collectExportBooks(messages);
 
       if (allBooks.length === 0) {
         setToastMessage('没有可导出的书籍');
@@ -730,7 +682,7 @@ export function RAGChat() {
     const streamingMsg: MessageType = {
       id: assistantMessageId,
       role: 'assistant',
-      content: '正在为您梳理需求，调取书库向量检索...',
+      content: '正在为您梳理需求，调取书库检索...',
       status: 'streaming',
     };
 
@@ -777,24 +729,13 @@ export function RAGChat() {
       const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const data = await response.json();
-        const rawBooks = data.recommendation?.books || [];
-        const maxScore = rawBooks.reduce((max: number, b: any) => {
-          const score = typeof b.relevance_score === 'number' ? b.relevance_score : 0;
-          return score > max ? score : max;
-        }, 0);
-        const recommendations = rawBooks.map((book: Record<string, unknown>) => {
-          let matchScore = typeof book.match_score === 'number' ? book.match_score : undefined;
-          if (matchScore === undefined && typeof book.relevance_score === 'number') {
-            matchScore = maxScore > 0 ? (book.relevance_score / maxScore) : 0.9;
-          }
-          return {
-            title: book.title, author: book.author, price: Number(book.price),
-            explanation: book.explanation, book_id: String(book.book_id ?? ''),
-            publisher: book.publisher, publication_year: book.publication_year,
-            category: book.category, stock: book.stock,
-            match_score: matchScore, source: book.source,
-          };
-        });
+        const recommendations = normalizeBookRecommendations(
+          (data.recommendation?.books || []) as Array<Record<string, unknown>>,
+          { normalizeScore: true },
+        );
+        const requirement = data.requirement
+          ? normalizeRequirementSnapshot(data.requirement as Record<string, unknown>)
+          : undefined;
 
         const sqlFromResp = data.retrieval?.sql;
         if (sqlFromResp) {
@@ -820,15 +761,7 @@ export function RAGChat() {
           id: assistantMessageId, role: 'assistant',
           content: data.summary || (recommendations.length > 0 ? '推荐已生成。' : '这次没找到合适的推荐结果。'),
           recommendations,
-          requirement: data.requirement ? {
-            categories: Array.isArray(data.requirement.categories) ? data.requirement.categories : [],
-            keywords: Array.isArray(data.requirement.keywords) ? data.requirement.keywords : [],
-            constraints: {
-              budget: typeof data.requirement.constraints?.budget === 'number' ? data.requirement.constraints.budget : undefined,
-              target_count: typeof data.requirement.constraints?.target_count === 'number' ? data.requirement.constraints.target_count : undefined,
-              exclude_keywords: Array.isArray(data.requirement.constraints?.exclude_keywords) ? data.requirement.constraints.exclude_keywords : undefined,
-            },
-          } : undefined,
+          requirement,
           totalPrice: typeof data.recommendation?.total_price === 'number' ? data.recommendation.total_price : undefined,
           sessionId: data.sessionId || sessionId || undefined,
           status: data.success ? 'done' : 'error',
@@ -838,125 +771,73 @@ export function RAGChat() {
         return;
       }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let currentEvent = 'message';
-      let sawTerminalEvent = false;
-
-      if (!reader) throw new Error('无法读取服务响应');
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('event:')) { currentEvent = line.slice(6).trim(); continue; }
-          if (!line.startsWith('data:')) continue;
-
-          const dataStr = line.slice(5).trim();
-          if (!dataStr || dataStr === '[DONE]') continue;
-
-          try {
-            const data = JSON.parse(dataStr);
-
-            if (currentEvent === 'progress') {
-              const sqlFromResp = data.data?.sql;
-              if (sqlFromResp) {
-                setLastSql(sqlFromResp);
-                setTimeout(() => updateActiveSession({ lastSql: sqlFromResp }), 0);
-              }
-              upsertAssistantMessage(assistantMessageId, (current) => ({
-                id: assistantMessageId, role: 'assistant',
-                content: data.content || current?.content || '正在处理你的请求...',
-                recommendations: current?.recommendations,
-                requirement: current?.requirement,
-                totalPrice: current?.totalPrice,
-                sessionId: current?.sessionId,
-                status: 'streaming',
-              }));
-            }
-
-            if (currentEvent === 'complete') {
-              sawTerminalEvent = true;
-              const rawBooks = data.recommendation?.books || [];
-              const maxScore = rawBooks.reduce((max: number, b: any) => {
-                const score = typeof b.relevance_score === 'number' ? b.relevance_score : 0;
-                return score > max ? score : max;
-              }, 0);
-              const recommendations = rawBooks.map((book: Record<string, unknown>) => {
-                let matchScore = typeof book.match_score === 'number' ? book.match_score : undefined;
-                if (matchScore === undefined && typeof book.relevance_score === 'number') {
-                  matchScore = maxScore > 0 ? (book.relevance_score / maxScore) : 0.9;
-                }
-                return {
-                  title: book.title, author: book.author, price: typeof book.price === 'number' ? book.price : Number(book.price) || 0,
-                  explanation: book.explanation, book_id: String(book.book_id ?? ''),
-                  publisher: book.publisher, publication_year: book.publication_year,
-                  category: book.category, stock: book.stock,
-                  match_score: matchScore, source: book.source,
-                };
-              });
-
-              const sqlFromResp = data.retrieval?.sql;
-              if (sqlFromResp) {
-                setLastSql(sqlFromResp);
-                setTimeout(() => updateActiveSession({ lastSql: sqlFromResp }), 0);
-              }
-
-              if (data.sessionId && data.sessionId !== sessionId) {
-                setSessions((prev) => {
-                  const updated = prev.map((s) => {
-                    if (s.id === activeSessionId) {
-                      return attachRemoteSessionId(s, data.sessionId);
-                    }
-                    return s;
-                  });
-                  localStorage.setItem('rag-chat-sessions', JSON.stringify(updated));
-                  return updated;
-                });
-                setSessionId(data.sessionId);
-              }
-
-              upsertAssistantMessage(assistantMessageId, () => ({
-                id: assistantMessageId, role: 'assistant',
-                content: data.summary || (recommendations.length > 0 ? '推荐已生成。' : '这次没找到合适的推荐结果。'),
-                recommendations,
-                requirement: data.requirement ? {
-                  categories: Array.isArray(data.requirement.categories) ? data.requirement.categories : [],
-                  keywords: Array.isArray(data.requirement.keywords) ? data.requirement.keywords : [],
-                  constraints: {
-                    budget: typeof data.requirement.constraints?.budget === 'number' ? data.requirement.constraints.budget : undefined,
-                    target_count: typeof data.requirement.constraints?.target_count === 'number' ? data.requirement.constraints.target_count : undefined,
-                    exclude_keywords: Array.isArray(data.requirement.constraints?.exclude_keywords) ? data.requirement.constraints.exclude_keywords : undefined,
-                  },
-                } : undefined,
-                totalPrice: typeof data.recommendation?.total_price === 'number' ? data.recommendation.total_price : undefined,
-                sessionId: data.sessionId || sessionId || undefined,
-                status: 'done',
-              }));
-
-              setIsLoading(false);
-            }
-
-            if (currentEvent === 'error') {
-              sawTerminalEvent = true;
-              upsertAssistantMessage(assistantMessageId, () => ({
-                id: assistantMessageId, role: 'assistant',
-                content: data.error || '抱歉，处理你的请求时出错了。你可以换个说法再试一次。',
-                status: 'error',
-              }));
-              setIsLoading(false);
-            }
-          } catch (parseError) {
-            console.error('Failed to parse SSE data:', parseError);
+      const sawTerminalEvent = await consumeSSEStream(response, {
+        onProgress: (data) => {
+          const sqlFromResp = (data.data as { sql?: string } | undefined)?.sql;
+          if (sqlFromResp) {
+            setLastSql(sqlFromResp);
+            setTimeout(() => updateActiveSession({ lastSql: sqlFromResp }), 0);
           }
-        }
-      }
+          upsertAssistantMessage(assistantMessageId, (current) => ({
+            id: assistantMessageId, role: 'assistant',
+            content: (data.content as string) || current?.content || '正在处理你的请求...',
+            recommendations: current?.recommendations,
+            requirement: current?.requirement,
+            totalPrice: current?.totalPrice,
+            sessionId: current?.sessionId,
+            status: 'streaming',
+          }));
+        },
+        onComplete: (data) => {
+          const recommendations = normalizeBookRecommendations(
+            ((data.recommendation as { books?: Array<Record<string, unknown>> } | undefined)?.books || []) as Array<Record<string, unknown>>,
+            { normalizeScore: true },
+          );
+          const requirement = data.requirement
+            ? normalizeRequirementSnapshot(data.requirement as Record<string, unknown>)
+            : undefined;
+
+          const sqlFromResp = (data.retrieval as { sql?: string } | undefined)?.sql;
+          if (sqlFromResp) {
+            setLastSql(sqlFromResp);
+            setTimeout(() => updateActiveSession({ lastSql: sqlFromResp }), 0);
+          }
+
+          if (data.sessionId && data.sessionId !== sessionId) {
+            setSessions((prev) => {
+              const updated = prev.map((s) => {
+                if (s.id === activeSessionId) {
+                  return attachRemoteSessionId(s, data.sessionId as string);
+                }
+                return s;
+              });
+              localStorage.setItem('rag-chat-sessions', JSON.stringify(updated));
+              return updated;
+            });
+            setSessionId(data.sessionId as string);
+          }
+
+          upsertAssistantMessage(assistantMessageId, () => ({
+            id: assistantMessageId, role: 'assistant',
+            content: (data.summary as string) || (recommendations.length > 0 ? '推荐已生成。' : '这次没找到合适的推荐结果。'),
+            recommendations,
+            requirement,
+            totalPrice: typeof (data.recommendation as { total_price?: number } | undefined)?.total_price === 'number' ? (data.recommendation as { total_price?: number }).total_price : undefined,
+            sessionId: (data.sessionId as string) || sessionId || undefined,
+            status: 'done',
+          }));
+
+          setIsLoading(false);
+        },
+        onError: (data) => {
+          upsertAssistantMessage(assistantMessageId, () => ({
+            id: assistantMessageId, role: 'assistant',
+            content: (data.error as string) || '抱歉，处理你的请求时出错了。你可以换个说法再试一次。',
+            status: 'error',
+          }));
+          setIsLoading(false);
+        },
+      });
 
       if (!sawTerminalEvent) {
         throw new Error('服务响应被意外中断，请稍后重试');
@@ -995,118 +876,35 @@ export function RAGChat() {
     [categoryWeight, draftRequirement, keywordWeight],
   );
 
+  const handleApplyTemplate = useCallback((template: RequirementTemplate) => {
+    setCategoryWeight(template.categoryWeight);
+    setKeywordWeight(template.keywordWeight);
+    applyPreparedRequirement(
+      template.sourceText,
+      template.requirement,
+      template.requirement.constraints.exclude_keywords ?? [],
+      {
+        type: 'template',
+        label: `手动采用模板：${template.name}`,
+        detail: '用户手动选择模板，已跳过 LLM 解析。',
+      },
+    );
+  }, [applyPreparedRequirement]);
+
   const renderSidebarContent = (onClose?: () => void) => (
-    <div className="flex flex-col justify-between h-full">
-      <div className="flex flex-col h-full min-h-0">
-        <div className="flex items-center gap-2 px-1 py-3 mb-4 select-none">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white border border-white/10 shadow-md">
-            <Sparkles className="w-4 h-4" />
-          </div>
-          <div>
-            <h1 className="text-sm font-bold text-slate-200 tracking-tight leading-none">BookStore RAG</h1>
-            <span className="text-[9px] text-slate-500 font-mono">v1.2</span>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => {
-            handleCreateSession();
-            onClose?.();
-          }}
-          className="flex items-center justify-center gap-2 w-full py-2.5 px-4 mb-4 rounded-xl border border-white/10 hover:border-blue-500/40 hover:bg-slate-900/60 text-slate-200 hover:text-white transition-all text-xs font-bold shadow-md shadow-black/10 active:scale-95"
-        >
-          <Plus className="w-4 h-4 text-blue-400" />
-          <span>新建推荐会话</span>
-        </button>
-
-        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-2 px-1">
-          会话历史
-        </div>
-
-        <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 min-h-0">
-          {sessions.map((sess) => {
-            const isActive = sess.id === activeSessionId;
-            return (
-              <div
-                key={sess.id}
-                onClick={() => {
-                  handleSwitchSession(sess.id);
-                  onClose?.();
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  saveSessionAsTemplate(sess);
-                }}
-                title="右键保存为需求模板并修改模板名称"
-                className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all duration-300 border text-xs font-semibold select-none ${
-                  isActive
-                    ? 'bg-blue-600/15 text-blue-400 border-blue-500/25 shadow-sm shadow-blue-500/5'
-                    : 'bg-transparent text-slate-400 border-transparent hover:bg-slate-900/45 hover:text-slate-200'
-                }`}
-              >
-                <div className="flex items-center gap-2 truncate flex-1 min-w-0 pr-1">
-                  <MessageSquare className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-blue-400' : 'text-slate-500'}`} />
-                  <span className="truncate">{sess.title || '新推荐会话'}</span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={(e) => handleDeleteSession(sess.id, e)}
-                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-rose-400 transition-all active:scale-90"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-5 border-t border-white/5 pt-4">
-          <div className="mb-2 flex items-center justify-between px-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-            <span>需求模板</span>
-            <Bookmark className="h-3.5 w-3.5" />
-          </div>
-          <div className="space-y-1.5">
-            {templates.length === 0 ? (
-              <p className="px-1 text-[10px] leading-4 text-slate-600">右键会话可保存模板</p>
-            ) : templates.map((template) => (
-              <button
-                key={template.id}
-                type="button"
-                onClick={() => {
-                  setCategoryWeight(template.categoryWeight);
-                  setKeywordWeight(template.keywordWeight);
-                  applyPreparedRequirement(
-                    template.sourceText,
-                    template.requirement,
-                    template.requirement.constraints.exclude_keywords ?? [],
-                    {
-                      type: 'template',
-                      label: `手动采用模板：${template.name}`,
-                      detail: '用户手动选择模板，已跳过 LLM 解析。',
-                    },
-                  );
-                  onClose?.();
-                }}
-                className="w-full rounded-md border border-transparent px-2.5 py-2 text-left hover:border-slate-700 hover:bg-slate-900/60"
-              >
-                <span className="block truncate text-[11px] font-semibold text-slate-300">{template.name}</span>
-                <span className="mt-1 block text-[9px] text-slate-600">精确命中后跳过 LLM</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="border-t border-white/5 pt-4 space-y-2 select-none shrink-0">
-        <LLMSettingsDialog config={llmProvider} onSave={handleProviderSave} />
-        <div className="text-[10px] text-slate-600 text-center font-mono">
-          <div>{llmProvider.model || 'LLM'} RAG Engine</div>
-          <div className="mt-0.5 opacity-60">© 2026 Antigravity</div>
-        </div>
-      </div>
-    </div>
+    <SidebarContent
+      sessions={sessions}
+      activeSessionId={activeSessionId}
+      templates={templates}
+      llmProvider={llmProvider}
+      onCreateSession={handleCreateSession}
+      onSwitchSession={handleSwitchSession}
+      onDeleteSession={handleDeleteSession}
+      onSaveSessionAsTemplate={saveSessionAsTemplate}
+      onApplyTemplate={handleApplyTemplate}
+      onProviderSave={handleProviderSave}
+      onClose={onClose}
+    />
   );
 
   return (

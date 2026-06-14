@@ -8,6 +8,10 @@ interface CatalogRerankBook {
   clc_code?: unknown;
   age_min?: unknown;
   age_max?: unknown;
+  // Used to key into feedback stats. Raw DB rows expose `id`; normalized Book
+  // exposes `book_id`. Either may be present depending on the caller.
+  book_id?: unknown;
+  id?: unknown;
 }
 
 interface ScoredBook<T extends CatalogRerankBook> {
@@ -421,7 +425,8 @@ function computeBookScore(
     }
   }
 
-  const bookId = String((book as any).book_id ?? (book as any).id ?? '');
+  const rawId = book.book_id ?? book.id;
+  const bookId = rawId == null ? '' : String(rawId);
   if (feedbackStats && bookId && feedbackStats[bookId]) {
     const stats = feedbackStats[bookId];
     const pos = Number(stats.positiveCount || 0);

@@ -39,12 +39,3 @@ export function requireAuth(req: NextRequest) {
 
   return null;
 }
-
-export function requireAdminRole(_req: NextRequest) {
-  // Role verification must come from authenticated token, not client headers.
-  // This is disabled pending proper JWT/session-based role enforcement.
-  return NextResponse.json(
-    { error: '需要管理员权限' },
-    { status: 403 }
-  );
-}

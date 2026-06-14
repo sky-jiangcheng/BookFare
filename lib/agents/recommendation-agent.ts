@@ -1,5 +1,5 @@
 // lib/agents/recommendation-agent.ts
-import type { Book, RecommendationResult, RequirementAnalysis } from '@/lib/types/rag';
+import type { Book, FeedbackStats, RecommendationResult, RequirementAnalysis } from '@/lib/types/rag';
 import { filterBlockedBooks } from '@/lib/server/book-filters';
 
 function rankForBudget(
@@ -93,7 +93,7 @@ function enforceRecommendationConstraints(
 export function buildHeuristicExplanation(
   book: Book,
   requirement: RequirementAnalysis,
-  feedbackStats?: any
+  feedbackStats?: FeedbackStats | null
 ): string {
   const haystack = `${book.title} ${book.category} ${book.description}`.toLowerCase();
   const matchedCategories = requirement.categories.filter((category) => haystack.includes(category.toLowerCase()));

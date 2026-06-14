@@ -10,7 +10,10 @@ export const redis: Redis | null = (() => {
       url: process.env.UPSTASH_REDIS_REST_URL || '',
       token: process.env.UPSTASH_REDIS_REST_TOKEN || '',
     });
-  } catch {
+  } catch (error) {
+    // Redis misconfiguration silently disables rate-limiting, session memory,
+    // and feedback — surface the failure so it doesn't go unnoticed.
+    console.error('[upstash] Failed to initialize Redis client (rate-limit/memory/feedback will be degraded):', error);
     return null;
   }
 })();

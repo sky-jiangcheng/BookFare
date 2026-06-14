@@ -4,7 +4,7 @@ import { sql } from '@vercel/postgres';
 
 import { buildCatalogTextSearch, SIMPLE_RERANK_THRESHOLD } from '@/lib/search/catalog-query';
 import { buildCatalogSearchTerms, rerankCatalogBooks } from '@/lib/search/query-rerank';
-import type { Book, CatalogSearchFilters } from '@/lib/types/rag';
+import type { Book, CatalogSearchFilters, FeedbackStats } from '@/lib/types/rag';
 
 /**
  * Shared SELECT columns for book queries.
@@ -165,7 +165,7 @@ export async function searchCatalogFromDatabase(filters: CatalogSearchFilters): 
 
   const books = normalizeBooks((await sql.query<CatalogApiBook>(query, params)).rows);
 
-  const feedbackStats: Record<string, any> = {};
+  const feedbackStats: Record<string, FeedbackStats> = {};
   try {
     const { getFeedbackStatsBatch } = await import('@/lib/feedback/feedback-store');
     const { hasRedisConfig } = await import('@/lib/config/environment');
@@ -228,7 +228,7 @@ function applySimpleRerank(
   books: Book[],
   filters: CatalogSearchFilters,
   searchTerms: string[],
-  feedbackStats: Record<string, any>,
+  feedbackStats: Record<string, FeedbackStats>,
 ): Book[] {
   const query = [filters.query, ...searchTerms].filter(Boolean).join(' ').toLowerCase();
   const terms = query ? query.match(/[\p{Script=Han}]{2,}|[\p{L}\p{N}]{2,}/gu) ?? [] : [];
@@ -273,8 +273,9 @@ export async function* streamBooksForExport(
   filters: CatalogSearchFilters,
 ): AsyncGenerator<Book[], void, undefined> {
   const { conditions: baseConditions, params: baseParams } = buildWhereConditions(filters, 1);
-  // Increment paramIdx past where buildWhereConditions ended
-  let paramIdx = 1 + baseParams.length;
+  // paramIdx is read-only here — it points past the WHERE-clause placeholders
+  // so the keyset pagination cursor and LIMIT can reuse the same counter.
+  const paramIdx = 1 + baseParams.length;
 
   const whereClause = baseConditions.length > 0 ? `WHERE ${baseConditions.join(' AND ')}` : '';
   const safeLimit = filters.limit !== undefined

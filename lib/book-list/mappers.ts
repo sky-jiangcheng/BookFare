@@ -180,7 +180,7 @@ export function recommendedBookToApiBook(
     difficulty_level: null,
     match_score: normalizedScore,
     score: normalizedScore * 100,
-    source: (book as any).source || '智能推荐',
+    source: book.source || '智能推荐',
     remark: book.explanation || null,
   };
 }
