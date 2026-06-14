@@ -1,6 +1,18 @@
 import { useState } from 'react';
 import { Filter, Loader2, Plus, Sliders, Trash2 } from 'lucide-react';
 
+/**
+ * Recommendation count bounds for the chat UI.
+ *
+ * The chat endpoint runs under a ~9s timeout, so the slider ceiling is capped
+ * well below what the DB/export path supports. Larger batches (up to 10,000)
+ * are reachable via the dedicated book-list generation/export API instead.
+ */
+const COUNT_MIN = 5;
+const COUNT_MAX = 200;
+/** Preset rungs offered as quick-pick options (in ascending order). */
+const COUNT_PRESETS: readonly number[] = [30, 50, 100, 150, 200];
+
 interface LibraryCategory {
   code: string;
   name: string;
@@ -132,7 +144,24 @@ export function TuningPanel({
             </select>
           </label>
           <RangeField label="推荐数量" value={`${targetCount} 本`}>
-            <input type="range" min="5" max="30" value={targetCount} onChange={(event) => onChangeTargetCount(Number(event.target.value))} />
+            <span className="mb-2 block">
+              <select
+                value={COUNT_PRESETS.includes(targetCount) ? String(targetCount) : 'custom'}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (!Number.isNaN(next)) onChangeTargetCount(next);
+                }}
+                className="w-full rounded-md border border-slate-700 bg-[#101216] px-3 py-2 text-xs text-slate-200 outline-none focus:border-amber-500/60"
+              >
+                {COUNT_PRESETS.map((preset) => (
+                  <option key={preset} value={preset}>{preset} 本</option>
+                ))}
+                {!COUNT_PRESETS.includes(targetCount) && (
+                  <option value="custom">自定义 {targetCount} 本</option>
+                )}
+              </select>
+            </span>
+            <input type="range" min={COUNT_MIN} max={COUNT_MAX} step="1" value={targetCount} onChange={(event) => onChangeTargetCount(Number(event.target.value))} />
           </RangeField>
           <RangeField label="分类匹配权重" value={categoryWeight.toFixed(1)}>
             <input type="range" min="0" max="3" step="0.1" value={categoryWeight} onChange={(event) => onChangeCategoryWeight(Number(event.target.value))} />

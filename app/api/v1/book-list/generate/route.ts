@@ -34,7 +34,10 @@ const generateSchema = z
       .nullable()
       .transform((s) => (s && s.trim() ? s.trim() : undefined)),
     requirements: parsedRequirementsSchema.nullable().optional(),
-    limit: z.number().int().min(5).max(100).optional(),
+    // This endpoint runs with a 60s maxDuration (see vercel.json) and the
+    // catalog repository caps search at 10,000 rows, so the limit can scale
+    // up to that ceiling. The chat endpoint (9s timeout) keeps a lower bound.
+    limit: z.number().int().min(5).max(10000).optional(),
     save_to_history: z.boolean().optional(),
     auto_complete: z.boolean().optional(),
   })

@@ -49,7 +49,11 @@ const chatRequestSchema = z.object({
     .optional()
     .transform((s) => s?.trim() || undefined),
   fast: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(50).optional(),
+  // Recommendation count ceiling for the chat endpoint. The chat path runs
+  // under a ~9s timeout, so this stays well below the DB/export ceiling
+  // (10,000) reachable via the book-list generation API. The TuningPanel UI
+  // matches this bound so the slider can never request more than allowed here.
+  limit: z.number().int().min(1).max(200).optional(),
   excludeKeywords: z.array(z.string()).optional(),
   categoryWeight: z.number().min(0).max(10).optional(),
   keywordWeight: z.number().min(0).max(10).optional(),
