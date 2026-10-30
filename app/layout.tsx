@@ -15,7 +15,7 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: 'BookStore - 智能图书推荐系统',
+  title: 'BookFerry 书渡 · 智能图书推荐系统',
   description: '基于 Agentic RAG 的个性化智能图书推荐系统',
 };
 

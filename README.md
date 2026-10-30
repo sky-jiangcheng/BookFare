@@ -1,4 +1,4 @@
-# BookStore Agentic RAG
+# BookFerry 书渡（项目名：book-ferry）
 
 面向 Vercel 部署的图书智能推荐系统。系统使用 Gemini 解析自然语言需求，以 Postgres 关键词召回和本地相关度排序替代向量数据库，并支持多轮对话和 Excel 书单导出。
 
@@ -97,7 +97,7 @@ RAG_BASE_URL=https://your-deployment.vercel.app npm run smoke:rag
 
 ## 启发式相关度重排公式
 
-为了在不消耗大量大模型 API 资源和响应时间的情况下对召回书籍进行高精度排序，系统在 [query-rerank.ts](file:///Users/jiangcheng/Workspace/Python/BookStore/bookstore-agentic-rag/lib/search/query-rerank.ts) 中实现了一套相关度重排算法。
+为了在不消耗大量大模型 API 资源和响应时间的情况下对召回书籍进行高精度排序，系统在 [query-rerank.ts](lib/search/query-rerank.ts) 中实现了一套相关度重排算法。
 
 书籍的总相关度得分 $S_{\text{total}}$ 的计算公式如下：
 

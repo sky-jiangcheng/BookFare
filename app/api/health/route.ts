@@ -16,7 +16,7 @@ export async function GET() {
     status,
     healthy: requiredDepsMet,
     database,
-    service: 'bookstore-agentic-rag',
+    service: 'book-ferry',
     dependencies: {
       database,
       redis,
