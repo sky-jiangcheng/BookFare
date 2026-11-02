@@ -114,6 +114,31 @@ try {
     console.log('⚠️  Trigram index skipped; keyword search will still work without it. Error:', e.message || e);
   }
 
+  // --- ADR-0002: pgvector semantic recall column ---
+  let vectorReady = false;
+  try {
+    await sql`CREATE EXTENSION IF NOT EXISTS vector`;
+    vectorReady = true;
+    console.log('✅ Created extension: vector');
+  } catch (e) {
+    console.log('⚠️  pgvector extension unavailable; semantic recall stays disabled. Error:', e.message || e);
+  }
+
+  if (vectorReady) {
+    await sql`ALTER TABLE books ADD COLUMN IF NOT EXISTS embedding vector(768)`;
+    console.log('✅ Ensured column: books.embedding vector(768)');
+
+    try {
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_books_embedding_hnsw
+        ON books USING hnsw (embedding vector_cosine_ops)
+      `;
+      console.log('✅ Created index: idx_books_embedding_hnsw');
+    } catch (e) {
+      console.log('⚠️  HNSW index skipped; sequential scan still works on small catalogs. Error:', e.message || e);
+    }
+  }
+
   console.log('\n✨ Schema initialization complete!\n');
 
 } catch (error) {

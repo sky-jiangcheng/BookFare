@@ -2,30 +2,17 @@ import 'server-only';
 
 import { sql } from '@vercel/postgres';
 
-import { buildCatalogTextSearch, SIMPLE_RERANK_THRESHOLD } from '@/lib/search/catalog-query';
+import { embedQueryText, vectorToPgLiteral } from '@/lib/ai/embeddings';
+import config, { isSemanticRecallEnabled } from '@/lib/config/environment';
+import {
+  BOOK_SELECT_COLUMNS,
+  buildCatalogTextSearch,
+  buildFilterConditions,
+  SIMPLE_RERANK_THRESHOLD,
+} from '@/lib/search/catalog-query';
 import { buildCatalogSearchTerms, rerankCatalogBooks } from '@/lib/search/query-rerank';
+import { buildVectorSearchQuery, mergeRecallPools } from '@/lib/search/semantic-recall';
 import type { Book, CatalogSearchFilters, FeedbackStats } from '@/lib/types/rag';
-
-/**
- * Shared SELECT columns for book queries.
- * Used by searchCatalogFromDatabase, streamBooksForExport, and getPopularBooksFromDatabase.
- */
-const BOOK_SELECT_COLUMNS = `
-  id AS book_id,
-  title,
-  author,
-  COALESCE(publisher, 'Unknown Publisher') AS publisher,
-  publication_year,
-  COALESCE(price, 0) AS price,
-  COALESCE(stock, 0) AS stock,
-  COALESCE(book_category, 'general') AS category,
-  '' AS description,
-  cover_url,
-  COALESCE(popularity_score, 0) AS relevance_score,
-  clc_code,
-  age_min,
-  age_max
-`;
 
 
 
@@ -85,11 +72,14 @@ function normalizeBooks(records: CatalogApiBook[]): Book[] {
 /**
  * Build WHERE conditions and params for catalog search filters.
  * startParamIndex specifies the first `$N` parameter number.
+ *
+ * Keyword text conditions come first, then the hard filters shared with the
+ * vector recall channel (buildFilterConditions).
  */
 function buildWhereConditions(
   filters: CatalogSearchFilters,
   startParamIndex: number,
-): { conditions: string[]; params: unknown[]; nextParamIndex: number } {
+): { conditions: string[]; params: unknown[] } {
   const conditions: string[] = [];
   const params: unknown[] = [];
   let paramIdx = startParamIndex;
@@ -104,38 +94,11 @@ function buildWhereConditions(
     paramIdx += textSearch.params.length;
   }
 
-  if (filters.author) {
-    params.push(`%${filters.author}%`);
-    conditions.push(`author ILIKE $${paramIdx++}`);
-  }
-  if (filters.price_min !== undefined) {
-    params.push(filters.price_min);
-    conditions.push(`price >= $${paramIdx++}`);
-  }
-  if (filters.price_max !== undefined) {
-    params.push(filters.price_max);
-    conditions.push(`price <= $${paramIdx++}`);
-  }
-  if (filters.publication_year_min !== undefined) {
-    params.push(filters.publication_year_min);
-    conditions.push(`publication_year >= $${paramIdx++}`);
-  }
-  if (filters.publication_year_max !== undefined) {
-    params.push(filters.publication_year_max);
-    conditions.push(`publication_year <= $${paramIdx++}`);
-  }
-  if (filters.categories && filters.categories.length > 0) {
-    const placeholders = filters.categories.map(() => `$${paramIdx++}`).join(',');
-    conditions.push(`book_category IN (${placeholders})`);
-    params.push(...filters.categories);
-  }
+  const filter = buildFilterConditions(filters, paramIdx);
+  conditions.push(...filter.conditions);
+  params.push(...filter.params);
 
-  if (filters.library_category && filters.library_category !== 'none') {
-    params.push(filters.library_category);
-    conditions.push(`library_codes @> ARRAY[$${paramIdx++}]::text[]`);
-  }
-
-  return { conditions, params, nextParamIndex: paramIdx };
+  return { conditions, params };
 }
 
 /**
@@ -165,12 +128,24 @@ export async function searchCatalogFromDatabase(filters: CatalogSearchFilters): 
 
   const books = normalizeBooks((await sql.query<CatalogApiBook>(query, params)).rows);
 
+  // ADR-0002: expand the candidate pool with pgvector semantic recall.
+  // Only for the non-paged search flow — paged browsing keeps deterministic
+  // pagination. Any failure here degrades to the keyword-only pool.
+  let candidates = books;
+  if (isSemanticRecallEnabled() && filters.query && filters.page === undefined) {
+    try {
+      candidates = await expandWithSemanticRecall(books, filters);
+    } catch (error) {
+      console.warn('[catalog-repository] Semantic recall skipped:', error);
+    }
+  }
+
   const feedbackStats: Record<string, FeedbackStats> = {};
   try {
     const { getFeedbackStatsBatch } = await import('@/lib/feedback/feedback-store');
     const { hasRedisConfig } = await import('@/lib/config/environment');
-    if (hasRedisConfig() && books.length > 0) {
-      const batchResult = await getFeedbackStatsBatch(books.map((b) => b.book_id));
+    if (hasRedisConfig() && candidates.length > 0) {
+      const batchResult = await getFeedbackStatsBatch(candidates.map((b) => b.book_id));
       for (const [bookId, stats] of batchResult) {
         if (stats) {
           feedbackStats[bookId] = stats;
@@ -181,16 +156,40 @@ export async function searchCatalogFromDatabase(filters: CatalogSearchFilters): 
     console.warn('[catalog-repository] Failed to load feedback stats:', error);
   }
 
-  if (books.length > SIMPLE_RERANK_THRESHOLD) {
-    return applySimpleRerank(books, filters, searchTerms, feedbackStats);
+  if (candidates.length > SIMPLE_RERANK_THRESHOLD) {
+    return applySimpleRerank(candidates, filters, searchTerms, feedbackStats);
   }
 
   return await rerankCatalogBooks(
-    books,
+    candidates,
     [filters.query, ...searchTerms].filter(Boolean).join(' '),
     filters.requirement,
     feedbackStats,
   );
+}
+
+/**
+ * ADR-0002 semantic recall channel: embed the query once, fetch ANN top-K
+ * with the same hard filters, and merge into the keyword pool (dedup by id).
+ */
+async function expandWithSemanticRecall(
+  keywordBooks: Book[],
+  filters: CatalogSearchFilters,
+): Promise<Book[]> {
+  const queryText = (filters.query ?? '').trim();
+  if (!queryText) {
+    return keywordBooks;
+  }
+
+  const embedding = await embedQueryText(queryText);
+  const { sql: vectorSql, params: vectorParams } = buildVectorSearchQuery(filters, {
+    topK: config.search.semanticTopK,
+  });
+  const result = await sql.query<CatalogApiBook>(
+    vectorSql,
+    [vectorToPgLiteral(embedding), ...vectorParams],
+  );
+  return mergeRecallPools(keywordBooks, normalizeBooks(result.rows));
 }
 
 export async function getBookDetailsFromDatabase(bookId: string): Promise<Book | null> {

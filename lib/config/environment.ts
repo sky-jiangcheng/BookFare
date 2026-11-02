@@ -26,6 +26,21 @@ export const config = {
   rag: {
     defaultTargetCount: 15,
   },
+  search: {
+    // ADR-0002: semantic recall via pgvector; disable to fall back to keyword-only recall.
+    semanticRecall: process.env.ENABLE_SEMANTIC_RECALL !== 'false',
+    semanticTopK: Number(process.env.SEMANTIC_TOP_K) || 100,
+    // ADR-0003: PG native tsvector full-text ranking signal.
+    fulltextRank: process.env.ENABLE_FULLTEXT_RANK !== 'false',
+    // ADR-0004: deterministic domain-graph neighbor expansion (book_edges + recursive CTE).
+    graphNeighbors: process.env.ENABLE_GRAPH_NEIGHBORS !== 'false',
+    graphDepth: Number(process.env.GRAPH_DEPTH) || 2,
+    graphNeighborLimit: Number(process.env.GRAPH_NEIGHBOR_LIMIT) || 100,
+  },
+  embedding: {
+    model: process.env.EMBEDDING_MODEL || 'gemini-embedding-001',
+    dimensions: Number(process.env.EMBEDDING_DIMENSIONS) || 768,
+  },
   // Vercel Deployment
   vercel: {
     enabled: process.env.VERCEL === 'true' || process.env.VERCEL_ENV !== undefined,
@@ -58,6 +73,25 @@ export function hasDatabaseConfig(): boolean {
 
 export function hasRedisConfig(): boolean {
   return Boolean(config.upstash.redisUrl && config.upstash.redisToken);
+}
+
+/**
+ * ADR-0002 semantic recall: requires the feature flag, a Gemini API key
+ * (to embed the query) and a database. Degrades silently to keyword-only
+ * recall when any precondition is missing.
+ */
+export function isSemanticRecallEnabled(): boolean {
+  return config.search.semanticRecall && Boolean(config.google.apiKey) && hasDatabaseConfig();
+}
+
+/** ADR-0003 full-text ranking signal (ts_rank_cd over the search_tsv column). */
+export function isFulltextRankEnabled(): boolean {
+  return config.search.fulltextRank && hasDatabaseConfig();
+}
+
+/** ADR-0004 graph neighbor expansion (book_edges + recursive CTE). */
+export function isGraphNeighborsEnabled(): boolean {
+  return config.search.graphNeighbors && hasDatabaseConfig();
 }
 
 export default config;

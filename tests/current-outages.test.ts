@@ -31,10 +31,12 @@ test('chat keeps local and remote session identifiers separate', async () => {
 });
 
 test('catalog search applies publication year as a parameterized filter', async () => {
-  const source = await readSource('lib/server/catalog-repository.ts');
+  // The WHERE builder (buildFilterConditions, shared by the keyword and the
+  // vector recall channels) advances a shared `paramIdx` counter for each
+  // placeholder. Both the min and max year bounds must be parameterized
+  // (not string-interpolated).
+  const source = await readSource('lib/search/catalog-query.ts');
 
-  // The WHERE builder advances a shared `paramIdx` counter for each placeholder.
-  // Both the min and max year bounds must be parameterized (not string-interpolated).
   assert.match(source, /publication_year >= \$\$\{paramIdx\+\+\}/);
   assert.match(source, /publication_year <= \$\$\{paramIdx\+\+\}/);
 });
