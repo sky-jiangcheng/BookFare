@@ -23,6 +23,7 @@
 - `app/layout.tsx` metadata.title → `BookFerry 书渡 · 智能图书推荐系统`
 - `README.md` 标题 → `# BookFerry 书渡（项目名：book-ferry）`，并修复重排公式章节指向本地绝对路径的失效链接
 - `package-lock.json` 已同步重新生成
+- GitHub 远程仓库已由 `sky-jiangcheng/BookFare` 改名为 `sky-jiangcheng/book-ferry`（2026-11-02，本地 remote URL 已同步更新），旧地址由 GitHub 自动重定向
 - `issue-vercel-unreachable.md` 中旧部署域名 `bookstore-agentic-rag.vercel.app` 为历史记录，保留不改；Vercel 项目重命名后旧域名将失效，需配置 redirect 或更新该记录
 
 ## 后果
