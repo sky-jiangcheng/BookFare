@@ -17,6 +17,8 @@ export interface Book {
   age_max?: number;
   /** ADR-0003: ts_rank_cd score over search_tsv, normalized to [0, 1] per pool. */
   fts_score?: number;
+  /** ADR-0004: domain-graph neighbor sub-score (S_graph, hop/edge-weight scaled). */
+  graph_score?: number;
 }
 
 export interface RequirementAnalysis {

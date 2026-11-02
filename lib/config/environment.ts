@@ -34,6 +34,7 @@ export const config = {
     fulltextRank: process.env.ENABLE_FULLTEXT_RANK !== 'false',
     // ADR-0004: deterministic domain-graph neighbor expansion (book_edges + recursive CTE).
     graphNeighbors: process.env.ENABLE_GRAPH_NEIGHBORS !== 'false',
+    graphSeedCount: Number(process.env.GRAPH_SEED_COUNT) || 10,
     graphDepth: Number(process.env.GRAPH_DEPTH) || 2,
     graphNeighborLimit: Number(process.env.GRAPH_NEIGHBOR_LIMIT) || 100,
   },

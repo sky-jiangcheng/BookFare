@@ -10,6 +10,8 @@ interface CatalogRerankBook {
   age_max?: unknown;
   /** ADR-0003: normalized ts_rank_cd score ([0, 1]) from the search_tsv column. */
   fts_score?: unknown;
+  /** ADR-0004: domain-graph neighbor sub-score (S_graph, hop/edge-weight scaled). */
+  graph_score?: unknown;
   // Used to key into feedback stats. Raw DB rows expose `id`; normalized Book
   // exposes `book_id`. Either may be present depending on the caller.
   book_id?: unknown;
@@ -325,6 +327,13 @@ function computeBookScore(
   const ftsScore = Number(book.fts_score ?? 0);
   if (Number.isFinite(ftsScore) && ftsScore > 0) {
     score += 4.0 * Math.min(1, ftsScore);
+  }
+
+  // ADR-0004: graph neighbor sub-score (S_graph), pre-scaled by hop depth
+  // and edge weight (1-hop ≈ 2.4 max, 2-hop ≈ 1.2 max).
+  const graphScore = Number(book.graph_score ?? 0);
+  if (Number.isFinite(graphScore) && graphScore > 0) {
+    score += graphScore;
   }
 
   const excludedKeywords = requirement?.constraints?.exclude_keywords || [];

@@ -18,6 +18,7 @@
     "migrate:publication-year": "node ./scripts/migrate-publication-year.mjs",
     "backfill:publication-years": "node ./scripts/backfill-publication-years.mjs",
     "backfill:embeddings": "node ./scripts/backfill-embeddings.mjs",
+    "build:book-edges": "node ./scripts/build-book-edges.mjs",
     "smoke:rag": "node ./scripts/smoke-rag.mjs",
     "vercel:build": "next build",
     "vercel:deploy": "vercel --prod"

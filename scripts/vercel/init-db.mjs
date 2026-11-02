@@ -151,6 +151,22 @@ try {
   await sql`CREATE INDEX IF NOT EXISTS idx_books_search_tsv ON books USING gin (search_tsv)`;
   console.log('✅ Created index: idx_books_search_tsv');
 
+  // --- ADR-0004: deterministic domain-graph edges ---
+  await sql`
+    CREATE TABLE IF NOT EXISTS book_edges (
+      from_book BIGINT NOT NULL,
+      to_book BIGINT NOT NULL,
+      edge_type TEXT NOT NULL,
+      weight REAL NOT NULL DEFAULT 1.0,
+      PRIMARY KEY (from_book, to_book, edge_type)
+    )
+  `;
+  console.log('✅ Created table: book_edges');
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_book_edges_from ON book_edges(from_book)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_book_edges_to ON book_edges(to_book)`;
+  console.log('✅ Created indexes: idx_book_edges_from / idx_book_edges_to');
+
   console.log('\n✨ Schema initialization complete!\n');
 
 } catch (error) {

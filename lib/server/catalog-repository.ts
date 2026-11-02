@@ -3,7 +3,7 @@ import 'server-only';
 import { sql } from '@vercel/postgres';
 
 import { embedQueryText, vectorToPgLiteral } from '@/lib/ai/embeddings';
-import config, { isFulltextRankEnabled, isSemanticRecallEnabled } from '@/lib/config/environment';
+import config, { isFulltextRankEnabled, isGraphNeighborsEnabled, isSemanticRecallEnabled } from '@/lib/config/environment';
 import {
   BOOK_SELECT_COLUMNS,
   buildCatalogTextSearch,
@@ -11,6 +11,11 @@ import {
   SIMPLE_RERANK_THRESHOLD,
 } from '@/lib/search/catalog-query';
 import { buildTsQueryExpression, normalizeFtsScores } from '@/lib/search/fulltext-rank';
+import {
+  buildGraphNeighborQuery,
+  computeGraphScores,
+  mergeGraphNeighbors,
+} from '@/lib/search/graph-recall';
 import { buildCatalogSearchTerms, rerankCatalogBooks } from '@/lib/search/query-rerank';
 import { buildVectorSearchQuery, mergeRecallPools } from '@/lib/search/semantic-recall';
 import type { Book, CatalogSearchFilters, FeedbackStats } from '@/lib/types/rag';
@@ -155,6 +160,17 @@ export async function searchCatalogFromDatabase(filters: CatalogSearchFilters): 
     }
   }
 
+  // ADR-0004: expand the pool with 1-2 hop neighbors from the domain graph.
+  // Seeds are the current pool leaders; failure (e.g. book_edges not built
+  // yet) degrades to the keyword/semantic pool as-is.
+  if (isGraphNeighborsEnabled() && candidates.length > 0) {
+    try {
+      candidates = await expandWithGraphNeighbors(candidates, filters);
+    } catch (error) {
+      console.warn('[catalog-repository] Graph neighbor expansion skipped:', error);
+    }
+  }
+
   const feedbackStats: Record<string, FeedbackStats> = {};
   try {
     const { getFeedbackStatsBatch } = await import('@/lib/feedback/feedback-store');
@@ -237,6 +253,57 @@ async function assignFtsScores(books: Book[], tsQueryText: string): Promise<void
       book.fts_score = score;
     }
   }
+}
+
+/**
+ * ADR-0004: take the pool leaders as seeds, walk 1-2 hops over book_edges,
+ * fetch the neighbor rows (same hard filters) and merge with S_graph scores.
+ */
+async function expandWithGraphNeighbors(
+  candidates: Book[],
+  filters: CatalogSearchFilters,
+): Promise<Book[]> {
+  const seedIds = candidates
+    .slice(0, config.search.graphSeedCount)
+    .map((b) => b.book_id);
+  if (seedIds.length === 0) {
+    return candidates;
+  }
+
+  const { sql: graphSql, params: graphParams } = buildGraphNeighborQuery(seedIds, {
+    depth: config.search.graphDepth,
+    limit: config.search.graphNeighborLimit,
+  });
+  const walkResult = await sql.query<{ book_id: string | number; depth: number; weight: number }>(
+    graphSql,
+    graphParams,
+  );
+  const graphScores = computeGraphScores(
+    walkResult.rows.map((row) => ({
+      book_id: String(row.book_id),
+      depth: Number(row.depth),
+      weight: Number(row.weight),
+    })),
+  );
+  if (graphScores.size === 0) {
+    return candidates;
+  }
+
+  const neighborIds = [...graphScores.keys()];
+  const filter = buildFilterConditions(filters, 2);
+  const whereClause = filter.conditions.length > 0
+    ? `WHERE id = ANY($1::bigint[]) AND ${filter.conditions.join(' AND ')}`
+    : 'WHERE id = ANY($1::bigint[])';
+  const booksResult = await sql.query<CatalogApiBook>(
+    `
+      SELECT${BOOK_SELECT_COLUMNS}
+      FROM books
+      ${whereClause}
+    `,
+    [neighborIds, ...filter.params],
+  );
+
+  return mergeGraphNeighbors(candidates, normalizeBooks(booksResult.rows), graphScores);
 }
 
 export async function getBookDetailsFromDatabase(bookId: string): Promise<Book | null> {
