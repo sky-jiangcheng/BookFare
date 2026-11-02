@@ -8,6 +8,8 @@ interface CatalogRerankBook {
   clc_code?: unknown;
   age_min?: unknown;
   age_max?: unknown;
+  /** ADR-0003: normalized ts_rank_cd score ([0, 1]) from the search_tsv column. */
+  fts_score?: unknown;
   // Used to key into feedback stats. Raw DB rows expose `id`; normalized Book
   // exposes `book_id`. Either may be present depending on the caller.
   book_id?: unknown;
@@ -315,6 +317,14 @@ function computeBookScore(
   const lexicalOverlap = titleHits + authorHits + publisherHits + categoryHits + descriptionHits;
   if (lexicalOverlap === 0) {
     score -= 2.75;
+  }
+
+  // ADR-0003: PG full-text ranking signal (ts_rank_cd over search_tsv,
+  // normalized to [0, 1] across the candidate pool). A full-strength hit
+  // weighs in above a single title match (3.5) on its own scale.
+  const ftsScore = Number(book.fts_score ?? 0);
+  if (Number.isFinite(ftsScore) && ftsScore > 0) {
+    score += 4.0 * Math.min(1, ftsScore);
   }
 
   const excludedKeywords = requirement?.constraints?.exclude_keywords || [];

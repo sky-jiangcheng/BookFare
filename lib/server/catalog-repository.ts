@@ -3,13 +3,14 @@ import 'server-only';
 import { sql } from '@vercel/postgres';
 
 import { embedQueryText, vectorToPgLiteral } from '@/lib/ai/embeddings';
-import config, { isSemanticRecallEnabled } from '@/lib/config/environment';
+import config, { isFulltextRankEnabled, isSemanticRecallEnabled } from '@/lib/config/environment';
 import {
   BOOK_SELECT_COLUMNS,
   buildCatalogTextSearch,
   buildFilterConditions,
   SIMPLE_RERANK_THRESHOLD,
 } from '@/lib/search/catalog-query';
+import { buildTsQueryExpression, normalizeFtsScores } from '@/lib/search/fulltext-rank';
 import { buildCatalogSearchTerms, rerankCatalogBooks } from '@/lib/search/query-rerank';
 import { buildVectorSearchQuery, mergeRecallPools } from '@/lib/search/semantic-recall';
 import type { Book, CatalogSearchFilters, FeedbackStats } from '@/lib/types/rag';
@@ -140,6 +141,20 @@ export async function searchCatalogFromDatabase(filters: CatalogSearchFilters): 
     }
   }
 
+  // ADR-0003: full-text ranking signal. Scores the whole candidate pool in
+  // one targeted query; failure (e.g. search_tsv column not migrated yet)
+  // degrades to the manual rerank weights only.
+  if (isFulltextRankEnabled() && searchTerms.length > 0 && candidates.length > 0) {
+    const tsQuery = buildTsQueryExpression(searchTerms);
+    if (tsQuery) {
+      try {
+        await assignFtsScores(candidates, tsQuery);
+      } catch (error) {
+        console.warn('[catalog-repository] Full-text scoring skipped:', error);
+      }
+    }
+  }
+
   const feedbackStats: Record<string, FeedbackStats> = {};
   try {
     const { getFeedbackStatsBatch } = await import('@/lib/feedback/feedback-store');
@@ -190,6 +205,38 @@ async function expandWithSemanticRecall(
     [vectorToPgLiteral(embedding), ...vectorParams],
   );
   return mergeRecallPools(keywordBooks, normalizeBooks(result.rows));
+}
+
+/**
+ * ADR-0003: compute ts_rank_cd scores for the candidate pool in one query and
+ * assign the normalized [0, 1] values to each book's fts_score.
+ */
+async function assignFtsScores(books: Book[], tsQueryText: string): Promise<void> {
+  if (books.length === 0) {
+    return;
+  }
+
+  const ids = books.map((b) => b.book_id);
+  const result = await sql.query<{ book_id: string | number; fts_score: string | number }>(
+    `
+      SELECT
+        id AS book_id,
+        ts_rank_cd(search_tsv, to_tsquery('simple', $1)) AS fts_score
+      FROM books
+      WHERE id = ANY($2::bigint[])
+    `,
+    [tsQueryText, ids],
+  );
+
+  const normalized = normalizeFtsScores(
+    result.rows.map((row) => ({ bookId: String(row.book_id), raw: Number(row.fts_score) })),
+  );
+  for (const book of books) {
+    const score = normalized.get(book.book_id);
+    if (score !== undefined) {
+      book.fts_score = score;
+    }
+  }
 }
 
 export async function getBookDetailsFromDatabase(bookId: string): Promise<Book | null> {

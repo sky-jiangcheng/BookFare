@@ -15,6 +15,8 @@ export interface Book {
   clc_code?: string;
   age_min?: number;
   age_max?: number;
+  /** ADR-0003: ts_rank_cd score over search_tsv, normalized to [0, 1] per pool. */
+  fts_score?: number;
 }
 
 export interface RequirementAnalysis {

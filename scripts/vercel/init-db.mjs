@@ -139,6 +139,18 @@ try {
     }
   }
 
+  // --- ADR-0003: native tsvector full-text ranking column ---
+  await sql`
+    ALTER TABLE books ADD COLUMN IF NOT EXISTS search_tsv tsvector
+    GENERATED ALWAYS AS (
+      to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(author, '') || ' ' || coalesce(book_category, ''))
+    ) STORED
+  `;
+  console.log('✅ Ensured column: books.search_tsv (generated tsvector)');
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_books_search_tsv ON books USING gin (search_tsv)`;
+  console.log('✅ Created index: idx_books_search_tsv');
+
   console.log('\n✨ Schema initialization complete!\n');
 
 } catch (error) {
