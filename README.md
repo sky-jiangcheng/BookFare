@@ -165,7 +165,7 @@ npm run import:books -- ./data/books.json
 BookFerry ranks recalled books locally — no LLM tokens, no added latency. The total relevance
 score in [`lib/search/query-rerank.ts`](lib/search/query-rerank.ts):
 
-$$S_{\text{total}} = S_{\text{init}} + S_{\text{lexical}} + S_{\text{category\_match}} + S_{\text{joint}} + S_{\text{no\_overlap}} + S_{\text{exclusion}} + S_{\text{topic}} + S_{\text{fts}} + S_{\text{graph}} + S_{\text{feedback}}$$
+$$S_{\text{total}} = S_{\text{init}} + S_{\text{lexical}} + S_{\text{categoryMatch}} + S_{\text{joint}} + S_{\text{noOverlap}} + S_{\text{exclusion}} + S_{\text{topic}} + S_{\text{fts}} + S_{\text{graph}} + S_{\text{feedback}}$$
 
 <details>
 <summary><b>Every signal, with its exact weight</b></summary>
@@ -174,9 +174,9 @@ $$S_{\text{total}} = S_{\text{init}} + S_{\text{lexical}} + S_{\text{category\_m
 |---|---|
 | **Base popularity** $S_{\text{init}}$ | $0.35 \times \ln(1 + \max(0, S_{\text{base}}))$ — log-smoothed popularity from the catalog |
 | **Lexical hits** $S_{\text{lexical}}$ | $3.5 \cdot H_{\text{title}} + 2.6 \cdot H_{\text{category}} + 1.4 \cdot H_{\text{author}} + 0.8 \cdot H_{\text{publisher}} + 0.6 \cdot H_{\text{description}}$ |
-| **Category match** $S_{\text{category\_match}}$ | `+4.5` when the book's category matches the queried category (or a category alias appears in the title) |
+| **Category match** $S_{\text{categoryMatch}}$ | `+4.5` when the book's category matches the queried category (or a category alias appears in the title) |
 | **Joint match bonus** $S_{\text{joint}}$ | `+1.25` when title **and** category both hit query terms |
-| **Zero-overlap penalty** $S_{\text{no\_overlap}}$ | `−2.75` when no text field shares any term with the query |
+| **Zero-overlap penalty** $S_{\text{noOverlap}}$ | `−2.75` when no text field shares any term with the query |
 | **Exclusion penalty** $S_{\text{exclusion}}$ | `−10` when the book hits a user's hard exclusion term |
 | **Topic fine-tuning** $S_{\text{topic}}$ | Domain boosts: health & wellness `+2.2` (title hit `+0.9`), popular science `+1.8`, biography `+2.8` (fiction `−2.6`), exact author match up to `+20` with `−4.5` for non-matches, per-board-game disambiguation `±4.5` |
 | **Full-text signal** $S_{\text{fts}}$ | $4.0 \times \min(1, \text{rank}_{\text{norm}})$ — PG `ts_rank_cd` normalized within the candidate pool (ADR-0003) |
