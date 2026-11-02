@@ -1,6 +1,6 @@
 {
   "name": "book-ferry",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "AI-powered book recommendations you can audit — Gemini chat over hybrid Postgres retrieval (keywords + pgvector + full-text + knowledge graph), transparent heuristic reranking, and one-click Excel book-list export.",
   "private": true,
   "scripts": {
