@@ -12,6 +12,7 @@ backed by hybrid retrieval that runs **entirely inside Postgres**. No vector dat
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![Gemini](https://img.shields.io/badge/Google_Gemini-2.0_Flash-8E75B2?logo=googlegemini&logoColor=white)](https://ai.google.dev)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector_·_tsvector_·_graph-4169E1?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/sky-jiangcheng/book-ferry/pulls)
 
 [Deploy with Vercel](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsky-jiangcheng%2Fbook-ferry&env=GOOGLE_API_KEY,DATABASE_URL&project-name=book-ferry) · [Report Bug](https://github.com/sky-jiangcheng/book-ferry/issues) · [Request Feature](https://github.com/sky-jiangcheng/book-ferry/issues)
@@ -197,12 +198,9 @@ npm run check   # lint + typecheck + build
 npm test        # unit tests
 ```
 
-## ⭐ Star History
+## 📄 License
 
-If BookFerry saved you from building your own recommendation stack, consider giving it a star —
-it helps other readers find the ferry.
-
-[![Star History Chart](https://api.star-history.com/svg?repos=sky-jiangcheng/book-ferry&type=Date)](https://star-history.com/#sky-jiangcheng/book-ferry&Date)
+Released under the [MIT License](LICENSE) — free to use, fork, and build on.
 
 ---
 
