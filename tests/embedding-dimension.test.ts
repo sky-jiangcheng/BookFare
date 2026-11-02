@@ -95,3 +95,19 @@ test('the schema script can detect and migrate a mismatched column', () => {
   assert.match(source, /readEmbeddingColumnDimension/);
   assert.match(source, /ALTER COLUMN embedding TYPE vector/);
 });
+
+test('the schema DDL never puts a bind parameter in a type position', () => {
+  const source = readFileSync(resolve(root, 'scripts/vercel/init-db.mjs'), 'utf8');
+  // `sql` is a server-side parameterised template, so an interpolated value
+  // becomes `$1` — and `vector($1)` is a syntax error. The dimension must go
+  // through `sql.query` instead.
+  assert.doesNotMatch(source, /sql`[^`]*\$\{/s);
+  assert.match(
+    source,
+    /sql\.query\([^)]*ALTER TABLE books ADD COLUMN IF NOT EXISTS embedding vector\(\$\{desiredDimension\}\)/,
+  );
+  assert.match(
+    source,
+    /sql\.query\([^)]*ALTER TABLE books ALTER COLUMN embedding TYPE vector\(\$\{desiredDimension\}\)/,
+  );
+});

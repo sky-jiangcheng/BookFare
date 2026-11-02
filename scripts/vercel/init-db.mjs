@@ -152,7 +152,12 @@ try {
     const existingDimension = await readEmbeddingColumnDimension();
 
     if (existingDimension === null) {
-      await sql`ALTER TABLE books ADD COLUMN IF NOT EXISTS embedding vector(${desiredDimension})`;
+      // `sql` is a server-side parameterised template — a bind parameter is
+      // not allowed in a type position, so the (validated integer) dimension
+      // goes into the statement text itself.
+      await sql.query(
+        `ALTER TABLE books ADD COLUMN IF NOT EXISTS embedding vector(${desiredDimension})`,
+      );
       console.log(`✅ Ensured column: books.embedding vector(${desiredDimension})`);
     } else if (existingDimension === desiredDimension) {
       console.log(`✅ Column already at vector(${desiredDimension})`);
@@ -166,7 +171,9 @@ try {
       console.log('🔄 Dropped index: idx_books_embedding_hnsw');
       await sql`UPDATE books SET embedding = NULL WHERE embedding IS NOT NULL`;
       console.log('🔄 Cleared stored embeddings (re-derivable by the backfill)');
-      await sql`ALTER TABLE books ALTER COLUMN embedding TYPE vector(${desiredDimension})`;
+      await sql.query(
+        `ALTER TABLE books ALTER COLUMN embedding TYPE vector(${desiredDimension})`,
+      );
       console.log(`✅ Migrated column: books.embedding → vector(${desiredDimension})`);
     } else {
       throw new Error(
