@@ -1,7 +1,7 @@
 # ADR-0002：检索升级——pgvector 语义混合召回（L1）
 
 - 日期：2026-10-31
-- 状态：🔵 Proposed（待确认）
+- 状态：✅ Accepted（已实施，commit 2306eaa）
 
 ## 背景
 

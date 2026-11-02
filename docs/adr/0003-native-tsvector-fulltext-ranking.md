@@ -1,7 +1,7 @@
 # ADR-0003：全文排序采用 PG 原生 tsvector（L2）
 
 - 日期：2026-10-31
-- 状态：🔵 Proposed（待确认，依赖 ADR-0002 落地后评估）
+- 状态：✅ Accepted（已实施，commit 2a0b3b9。注：description 在独立表 book_descriptions 中，无法纳入生成列，tsvector 仅覆盖 title/author/category，语义通道补足简介相关性）
 
 ## 背景
 
