@@ -69,7 +69,10 @@ test('embedTexts batches requests and preserves order', async () => {
   const fetchImpl = (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
     const body = JSON.parse(String(init.body));
-    const embeddings = body.requests.map(() => ({ values: [0.5, 0.5] }));
+    // Gemini returns one value per requested dimension — mirror that, so the
+    // dimension assertion in embedTexts sees a realistic payload.
+    const dimensions = body.requests[0].outputDimensionality;
+    const embeddings = body.requests.map(() => ({ values: new Array(dimensions).fill(0.5) }));
     return new Response(JSON.stringify({ embeddings }), { status: 200 });
   }) as unknown as typeof fetch;
 

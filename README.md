@@ -116,7 +116,18 @@ ALLOWED_ORIGINS=
 | `ENABLE_GRAPH_NEIGHBORS` | `true` | Multi-hop domain-graph expansion (needs `book_edges`) — ADR-0004 |
 | `SEMANTIC_TOP_K` | `100` | Vector recall Top-K |
 | `GRAPH_SEED_COUNT` / `GRAPH_DEPTH` / `GRAPH_NEIGHBOR_LIMIT` | `10` / `2` / `100` | Graph expansion tuning (depth 1–3) |
-| `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` | `gemini-embedding-001` / `768` | Embedding config |
+| `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` | `gemini-embedding-001` / `768` | Embedding config — the dimension is validated against `books.embedding`; see below |
+
+### Embedding dimension contract
+
+The vector dimension is a database contract, not a free-form setting:
+
+- `books.embedding` is the source of truth. The runtime reads the column's actual dimension and
+  embeds query text at exactly that size; the backfill script does the same.
+- `EMBEDDING_DIMENSIONS` only tells `scripts/vercel/init-db.mjs` which dimension to create the
+  column with. An unsupported value fails fast instead of silently falling back.
+- Changing it requires a migration: `node scripts/vercel/init-db.mjs --fix-dimension` (retypes the
+  column and clears the stored vectors — they are re-derivable), then re-run the backfill.
 
 ## 🗄️ Database — fully automated
 

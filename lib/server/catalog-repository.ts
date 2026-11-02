@@ -4,6 +4,8 @@ import { sql } from '@vercel/postgres';
 
 import { embedQueryText, vectorToPgLiteral } from '@/lib/ai/embeddings';
 import config, { isFulltextRankEnabled, isGraphNeighborsEnabled, isSemanticRecallEnabled } from '@/lib/config/environment';
+import { assertEmbeddingDimension } from '@/lib/embedding-dimension.mjs';
+import { getStoredEmbeddingDimension } from '@/lib/server/embedding-dimension';
 import {
   BOOK_SELECT_COLUMNS,
   buildCatalogTextSearch,
@@ -212,7 +214,12 @@ async function expandWithSemanticRecall(
     return keywordBooks;
   }
 
-  const embedding = await embedQueryText(queryText);
+  // Embed at the dimension the column actually uses, not whatever the
+  // environment says — a mismatch here fails the whole ANN comparison.
+  const dimension = await getStoredEmbeddingDimension();
+  const embedding = await embedQueryText(queryText, { dimensions: dimension });
+  assertEmbeddingDimension(embedding, dimension);
+
   const { sql: vectorSql, params: vectorParams } = buildVectorSearchQuery(filters, {
     topK: config.search.semanticTopK,
   });

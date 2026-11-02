@@ -7,10 +7,33 @@
 
 import { sql } from '@vercel/postgres';
 
+import { parseVectorColumnDimension, resolveEmbeddingDimensions } from '../../lib/embedding-dimension.mjs';
+
 console.log('🚀 Initializing BookStore database schema...\n');
 
 // Check for --drop flag to allow table reset
 const shouldDrop = process.argv.includes('--drop');
+// Check for --fix-dimension flag to allow migrating an existing embedding column
+const shouldFixDimension = process.argv.includes('--fix-dimension');
+
+/**
+ * Current dimension of the `books.embedding` column, or null when the column
+ * does not exist yet (or is not a dimensioned vector column).
+ */
+async function readEmbeddingColumnDimension() {
+  const { rows } = await sql`
+    SELECT format_type(a.atttypid, a.atttypmod) AS column_type
+    FROM pg_attribute a
+    JOIN pg_class c ON c.oid = a.attrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relname = 'books'
+      AND a.attname = 'embedding'
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+  `;
+  return parseVectorColumnDimension(rows[0]?.column_type);
+}
 
 if (shouldDrop) {
   // WARNING: This will permanently delete all data in the books table!
@@ -125,8 +148,33 @@ try {
   }
 
   if (vectorReady) {
-    await sql`ALTER TABLE books ADD COLUMN IF NOT EXISTS embedding vector(768)`;
-    console.log('✅ Ensured column: books.embedding vector(768)');
+    const desiredDimension = resolveEmbeddingDimensions();
+    const existingDimension = await readEmbeddingColumnDimension();
+
+    if (existingDimension === null) {
+      await sql`ALTER TABLE books ADD COLUMN IF NOT EXISTS embedding vector(${desiredDimension})`;
+      console.log(`✅ Ensured column: books.embedding vector(${desiredDimension})`);
+    } else if (existingDimension === desiredDimension) {
+      console.log(`✅ Column already at vector(${desiredDimension})`);
+    } else if (shouldFixDimension) {
+      // pgvector has no cast between different dimensions, so the stored
+      // vectors must be cleared before the column can be retyped.
+      console.warn(
+        `⚠️  Column is vector(${existingDimension}) but EMBEDDING_DIMENSIONS is ${desiredDimension} — migrating.`,
+      );
+      await sql`DROP INDEX IF EXISTS idx_books_embedding_hnsw`;
+      console.log('🔄 Dropped index: idx_books_embedding_hnsw');
+      await sql`UPDATE books SET embedding = NULL WHERE embedding IS NOT NULL`;
+      console.log('🔄 Cleared stored embeddings (re-derivable by the backfill)');
+      await sql`ALTER TABLE books ALTER COLUMN embedding TYPE vector(${desiredDimension})`;
+      console.log(`✅ Migrated column: books.embedding → vector(${desiredDimension})`);
+    } else {
+      throw new Error(
+        `books.embedding is vector(${existingDimension}) but EMBEDDING_DIMENSIONS is ${desiredDimension}. ` +
+          'Run `node scripts/vercel/init-db.mjs --fix-dimension` to migrate the column, ' +
+          'then re-run `npm run backfill:embeddings`.',
+      );
+    }
 
     try {
       await sql`

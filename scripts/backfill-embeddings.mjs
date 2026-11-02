@@ -4,18 +4,23 @@
  * ADR-0002: Backfill book embeddings for semantic recall.
  *
  * Reads books whose `embedding` column is NULL, generates Gemini embeddings
- * (gemini-embedding-001, 768 dims, RETRIEVAL_DOCUMENT task type) and writes
- * them back to `books.embedding`. Safe to re-run; incremental by design.
+ * (gemini-embedding-001, RETRIEVAL_DOCUMENT task type) and writes them back to
+ * `books.embedding`. Safe to re-run; incremental by design.
+ *
+ * The embedding dimension is taken from the `books.embedding` column itself, so
+ * the vectors written here always match the column. `--dimensions` is only
+ * accepted when it agrees with the column.
  *
  * Usage:
  *   node scripts/backfill-embeddings.mjs [--env-file .env.local] \
- *     [--batch-size 32] [--limit 0] [--model gemini-embedding-001] [--dimensions 768]
+ *     [--batch-size 32] [--limit 0] [--model gemini-embedding-001] [--dimensions N]
  *
  * Requires: GOOGLE_API_KEY, POSTGRES_URL (or DATABASE_URL).
  */
 
 import { createPool } from '@vercel/postgres';
 
+import { assertEmbeddingDimension, parseVectorColumnDimension } from '../lib/embedding-dimension.mjs';
 import { loadEnvFile } from './lib/load-env.mjs';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -28,7 +33,7 @@ function parseArgs(argv) {
     batchSize: 32,
     limit: 0,
     model: 'gemini-embedding-001',
-    dimensions: 768,
+    dimensions: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -59,10 +64,31 @@ function parseArgs(argv) {
   if (!Number.isInteger(args.limit) || args.limit < 0) {
     throw new Error('--limit must be a non-negative integer (0 = all)');
   }
-  if (!Number.isInteger(args.dimensions) || args.dimensions < 1) {
+  if (args.dimensions !== null && (!Number.isInteger(args.dimensions) || args.dimensions < 1)) {
     throw new Error('--dimensions must be a positive integer');
   }
   return args;
+}
+
+/**
+ * Dimension of the `books.embedding` column, or null when the column is
+ * missing or is not a dimensioned vector column.
+ */
+async function readEmbeddingColumnDimension(pool) {
+  const result = await pool.query(
+    `
+      SELECT format_type(a.atttypid, a.atttypmod) AS column_type
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = 'books'
+        AND a.attname = 'embedding'
+        AND a.attnum > 0
+        AND NOT a.attisdropped
+    `,
+  );
+  return parseVectorColumnDimension(result.rows[0]?.column_type);
 }
 
 /** Document text fed to the embedding model: title + author + category + description snippet. */
@@ -137,17 +163,21 @@ async function main() {
   const pool = createPool({ connectionString });
 
   try {
-    const columnCheck = await pool.query(
-      `
-        SELECT EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema = 'public' AND table_name = 'books' AND column_name = 'embedding'
-        ) AS ready
-      `,
-    );
-    if (!columnCheck.rows[0]?.ready) {
-      throw new Error('books.embedding column missing — run `node scripts/vercel/init-db.mjs` first');
+    // The column decides the dimension — never the environment. Writing a
+    // vector whose length differs from the column is what breaks recall.
+    const columnDimension = await readEmbeddingColumnDimension(pool);
+    if (columnDimension === null) {
+      throw new Error(
+        'books.embedding column missing or not dimensioned — run `node scripts/vercel/init-db.mjs` first',
+      );
     }
+    if (args.dimensions !== null && args.dimensions !== columnDimension) {
+      throw new Error(
+        `--dimensions ${args.dimensions} does not match the books.embedding column dimension (${columnDimension}).`,
+      );
+    }
+    const dimensions = columnDimension;
+    console.log(`📐 Embedding dimension: ${dimensions} (from books.embedding)`);
 
     const { rows: countRows } = await pool.query(
       'SELECT COUNT(*)::int AS pending FROM books WHERE embedding IS NULL',
@@ -167,10 +197,11 @@ async function main() {
       const vectors = await batchEmbedContents(texts, {
         apiKey,
         model: args.model,
-        dimensions: args.dimensions,
+        dimensions,
       });
 
       for (let i = 0; i < books.length; i += 1) {
+        assertEmbeddingDimension(vectors[i], dimensions);
         const literal = `[${vectors[i].join(',')}]`;
         await pool.query('UPDATE books SET embedding = $1::vector, updated_at = NOW() WHERE id = $2', [
           literal,

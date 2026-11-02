@@ -1,6 +1,7 @@
 import 'server-only';
 
 import config from '@/lib/config/environment';
+import { assertEmbeddingDimension } from '@/lib/embedding-dimension.mjs';
 
 /**
  * ADR-0002: Gemini embeddings client for semantic recall.
@@ -153,6 +154,12 @@ export async function embedTexts(
     if (chunkVectors.length !== chunk.length) {
       throw new Error(`Embedding count mismatch: sent ${chunk.length}, got ${chunkVectors.length}`);
     }
+    // Gemini may ignore `outputDimensionality` for some models — verify before
+    // the vectors reach Postgres, where the mismatch surfaces as an opaque
+    // pgvector error inside a query.
+    for (const vector of chunkVectors) {
+      assertEmbeddingDimension(vector, dimensions);
+    }
     vectors.push(...chunkVectors);
   }
   return vectors;
@@ -182,5 +189,7 @@ export async function embedQueryText(text: string, options: EmbeddingOptions = {
     body,
     fetchImpl,
   );
-  return parseSingleEmbeddingResponse(payload);
+  const values = parseSingleEmbeddingResponse(payload);
+  assertEmbeddingDimension(values, dimensions);
+  return values;
 }

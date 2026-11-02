@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { resolveEmbeddingDimensions } from '@/lib/embedding-dimension.mjs';
+
 export const config = {
   google: {
     apiKey: process.env.GOOGLE_API_KEY || '',
@@ -40,7 +42,10 @@ export const config = {
   },
   embedding: {
     model: process.env.EMBEDDING_MODEL || 'gemini-embedding-001',
-    dimensions: Number(process.env.EMBEDDING_DIMENSIONS) || 768,
+    // Single source of truth: lib/embedding-dimension.mjs. An unsupported
+    // value throws here rather than silently falling back to a dimension the
+    // pgvector column does not use.
+    dimensions: resolveEmbeddingDimensions(),
   },
   // Vercel Deployment
   vercel: {
