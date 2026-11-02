@@ -141,8 +141,13 @@ async function main() {
   const incremental = args.bookIds.length > 0;
   const pool = createPool({ connectionString });
 
+  // All mutations run in one transaction so an auto-triggered rebuild is
+  // atomic — graph queries never observe a half-rebuilt edge set.
+  const client = await pool.connect();
   try {
-    const { rows: tableCheck } = await pool.query(
+    await client.query('BEGIN');
+
+    const { rows: tableCheck } = await client.query(
       `SELECT to_regclass('public.book_edges') IS NOT NULL AS ready`,
     );
     if (!tableCheck[0]?.ready) {
@@ -151,28 +156,28 @@ async function main() {
 
     if (incremental) {
       console.log(`🔄 Incremental rebuild for ${args.bookIds.length} books`);
-      await pool.query(
+      await client.query(
         `DELETE FROM book_edges WHERE from_book = ANY($1::bigint[]) OR to_book = ANY($1::bigint[])`,
         [args.bookIds],
       );
     } else {
       console.log('🔄 Full rebuild: truncating book_edges');
-      await pool.query('TRUNCATE book_edges');
+      await client.query('TRUNCATE book_edges');
     }
 
     let structural = 0;
     for (const spec of EDGE_SPECS) {
       const insertSql = buildStructuralEdgeInsert(spec, incremental);
-      const result = await pool.query(insertSql, incremental ? [args.bookIds] : []);
+      const result = await client.query(insertSql, incremental ? [args.bookIds] : []);
       structural += result.rowCount ?? 0;
       console.log(`✅ ${spec.type}: +${result.rowCount ?? 0} edges (weight ${spec.weight})`);
     }
 
-    const topic = await insertTopicEntityEdges(pool, incremental);
+    const topic = await insertTopicEntityEdges(client, incremental);
     console.log(`✅ topic_entity: +${topic} edges (weight ${TOPIC_ENTITY_WEIGHT})`);
 
     // Symmetrize: mirror every edge so from_book/to_book both traverse.
-    const mirrored = await pool.query(
+    const mirrored = await client.query(
       `
       INSERT INTO book_edges (from_book, to_book, edge_type, weight)
       SELECT to_book, from_book, edge_type, weight
@@ -182,14 +187,19 @@ async function main() {
     );
     console.log(`🔁 Symmetrized: +${mirrored.rowCount ?? 0} mirrored edges`);
 
-    const { rows: totals } = await pool.query(
+    const { rows: totals } = await client.query(
       `SELECT edge_type, COUNT(*)::int AS edges FROM book_edges GROUP BY edge_type ORDER BY edge_type`,
     );
+    await client.query('COMMIT');
     for (const row of totals) {
       console.log(`   ${row.edge_type}: ${row.edges}`);
     }
     console.log('\n✨ book_edges build complete.');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
   } finally {
+    client.release();
     await pool.end();
   }
 }

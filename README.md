@@ -69,20 +69,24 @@ EMBEDDING_DIMENSIONS=768
 
 ## 数据库
 
-初始化（可重复执行，自动补齐 ADR-0002/0003/0004 所需列与索引）：
+### 自动化（推荐）
+
+迁移与回填**全自动**，无需人工步骤：
+
+- **Schema 迁移**：Vercel 每次构建时自动执行 `node scripts/vercel/init-db.mjs`（幂等、非致命，见 `vercel.json` buildCommand）
+- **数据回填**：GitHub Actions（[db-maintenance.yml](.github/workflows/db-maintenance.yml)）在推送 main（涉及 scripts 变更）、每周一 11:00（北京时间）或手动触发时，自动执行 embedding 增量回填（每轮上限 5000 本）与 book_edges 原子重建（单事务）
+
+首次使用前需在仓库 Settings → Secrets and variables → Actions 配置 `POSTGRES_URL`（Neon 连接串）和 `GOOGLE_API_KEY`（Gemini key）。首次 5 万本量级的 embedding 回填约 40 分钟，可在 Actions 页面手动触发并盯跑一轮。
+
+### 手动执行（备用）
 
 ```bash
-node scripts/vercel/init-db.mjs
+node scripts/vercel/init-db.mjs   # 建表/补列/建索引，可重复执行
+npm run backfill:embeddings       # 为无 embedding 的书籍生成向量（需 GOOGLE_API_KEY）
+npm run build:book-edges          # 构建 book_edges 领域图谱（支持 --book-ids 增量）
 ```
 
 数据库脚本会尝试启用 `pg_trgm` 与 `pgvector` 并创建相应索引。如果当前数据库不允许安装扩展，普通 `ILIKE` 关键词检索仍可工作，语义召回通道自动跳过。
-
-检索增强数据回填（初始化后执行一次）：
-
-```bash
-npm run backfill:embeddings   # 为无 embedding 的书籍生成向量（需 GOOGLE_API_KEY）
-npm run build:book-edges      # 构建 book_edges 领域图谱（导入/重分类后可重跑，支持 --book-ids 增量）
-```
 
 召回管线（`lib/server/catalog-repository.ts`）：关键词 ILIKE 召回 ∪ pgvector ANN 召回 → 候选池 ts_rank_cd 全文打分 → book_edges 递归 CTE 邻居扩展 → 本地启发式重排（`lib/search/query-rerank.ts`）。任一增强通道失败或未开旗时自动降级，不影响基础检索。
 
